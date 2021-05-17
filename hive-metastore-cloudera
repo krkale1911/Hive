@@ -1,0 +1,200 @@
+#################################################################
+	Configuring hive remote metastore on CDH
+#################################################################
+
+
+## Note : Cloudera recommends you configure a database for the metastore on one or more remote servers (that is, on a host or hosts separate from
+the HiveServer1 or HiveServer2 process). MySQL is the most popular database to use. 
+
+We will configure mysql db on a host different from HMS and HS2 service
+
+
+-----**** Install mysql ****-----
+
+sudo apt-get install mysql-server -y
+                               
+                                 
+-----**** Install mysql connector ****-----
+
+## Do this on HS2 and HMS hosts
+
+sudo apt‐get install libmysql‐java 
+             ------------------------------------type cmd 
+
+
+cd /opt/cloudera/parcels
+ls
+
+     -------------------------check vesion of cloudera and match it in bellow line
+cd
+ 
+bellow command do HS2 & HMS  
+sudo cp /usr/share/java/mysql-connector-java-5.1.38.jar /opt/cloudera/parcels/CDH-5.13.3-1.cdh5.13.3.p0.2/lib/hive/lib/
+								
+				
+						------------------driver paste in /lib/hive/lib
+
+
+-----**** Secure mysql ****-----
+on DB node
+
+$ sudo /usr/bin/mysql_secure_installation 
+[...] 
+Enter current password for root (enter for none): 
+OK, successfully used password, moving on... 
+[...] 
+Set root password? [Y/n] y 
+New password: 
+Re‐enter new password: 
+Remove anonymous users? [Y/n] Y 
+[...] 
+Disallow root login remotely? [Y/n] N 
+[...] 
+Remove test database and access to it [Y/n] Y 
+[...] 
+Reload privilege tables now? [Y/n] Y 
+All done!
+
+
+
+-----**** Create database and user ****-----
+
+
+$ mysql ‐u root ‐p        --------------------------type manually
+Enter password: 
+mysql> CREATE DATABASE metastore; 
+mysql> USE metastore; 
+
+		************************************************************************************************************************************
+		[1--In DB stored the schema But this schima store in DB under this DB -->table &
+		    AND in this table All schima are stored in tabulr form 
+		 2--But those genration time table's also requierd Schema 
+		 3--So bellow command done this table with schima automatically ]
+		************************************************************************************************************************************
+
+mysql> SOURCE /opt/cloudera/parcels/CDH-5.13.3-1.cdh5.13.3.p0.2/lib/hive/scripts/metastore/upgrade/mysql/hive-schema-1.1.0.mysql.sql;
+                       
+					--------------------------create table in DB
+
+mysql> CREATE USER 'hive'@'ip-172-31-17-155.ec2.internal' IDENTIFIED BY 'mypassword'; 
+
+						--------------------PVT-DNS of HMS
+		 					(Note : in the place of metastorehost use <pri-dns> of host on which HMS is running )
+
+mysql> REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'hive'@'ip-172-31-17-155.ec2.internal'; 
+				
+
+				mysql> GRANT ALL PRIVILEGES ON metastore.* TO 'hive'@'metastorehost';                   
+                                   ------------------'metastorehost' replace by PVT-DNS of HMS like bellow command                           						
+mysql> GRANT ALL PRIVILEGES ON metastore.* TO 'hive'@'ip-172-31-17-155.ec2.internal'; 
+
+mysql> FLUSH PRIVILEGES; 
+mysql> quit;
+
+######################################################################################################################################
+
+		-----**** Configure metastore service to communicate with the MySQL db ****-----
+
+			--------------------------connect to hms-----------------------------
+
+## Do following on HMS host
+ 
+cd /opt/cloudera/parcels/ 
+ls 
+---------copy version and paste bellow line
+cd
+
+sudo nano /opt/cloudera/parcels/CDH-5.13.3-1.cdh5.13.3.p0.2/etc/hive/conf.dist/hive-site.xml
+
+		-------------------We have to comment or Delete properties,There are old property is showing Embeded_Mode with Derby_Database
+
+
+in bellow properties	[property_1 ---- <value>jdbc:mysql://<PVT-DNS -DB>/<DataBase_NAME></value>
+			 property_3 ---- <value>USER_NAME</value>  ---------hive we taken
+		         property_4 ---- <value>PASSWORD</value>  ----------we set pass for hive user mypassword
+			 property_8 ---- <name>hive.metastore.uris</name>
+					 <value>thrift://<PVT- DNS-HMS>:9083</val
+			]
+
+<property>
+  <name>javax.jdo.option.ConnectionURL</name>
+  <value>jdbc:mysql://ip-172-31-17-155.ec2.internal/metastore</value>
+  <description>the URL of the MySQL database</description>
+</property> 
+<property>
+  <name>javax.jdo.option.ConnectionDriverName</name>
+  <value>com.mysql.jdbc.Driver</value>
+</property>
+<property>
+  <name>javax.jdo.option.ConnectionUserName</name>
+  <value>hive</value>
+</property>
+<property>
+  <name>javax.jdo.option.ConnectionPassword</name>
+  <value>mypassword</value>
+</property> 
+<property>
+  <name>datanucleus.autoCreateSchema</name>
+  <value>false</value>
+</property>
+<property>
+  <name>datanucleus.fixedDatastore</name>
+  <value>true</value>
+</property>
+<property>
+  <name>datanucleus.autoStartMechanism</name>
+  <value>SchemaTable</value>
+</property>
+<property>
+  <name>hive.metastore.uris</name>
+  <value>thrift://ip-172-31-17-155.ec2.internal:9083</value>
+  <description>IP address (or fully‐qualified domain name) and port of the metastore host</description>
+</property>
+<property>
+<name>hive.metastore.schema.verification</name>
+<value>true</value>
+</property>
+
+
+## Note : hive.metastore.uris is the only property that must be configured on all
+  ---------------------------------(Because client can not connect direct to HMS . Client connect to SH2 and Then HS2 Connect HMS)
+
+
+##################################################################################################################################
+
+
+				------------------Connect to HS2-------------------
+
+cd /opt/cloudera/parcels/ 
+ls 
+---------copy version and paste bellow line
+cd
+
+sudo nano /opt/cloudera/parcels/CDH-5.13.3-1.cdh5.13.3.p0.2/etc/hive/conf.dist/hive-site.xml
+
+		-------------------We have to comment or Delete properties,There are old property is showing Embeded_Mode with Derby_Database
+		
+in bellow property	[property ---- <name>hive.metastore.uris</name>
+			               <value>thrift://<PVT-DNS-HMS>:9083</val
+			]
+
+<property>
+  <name>hive.metastore.uris</name>
+  <value>thrift://ip-172-31-17-155.ec2.internal:9083</value>
+  <description>IP address (or fully‐qualified domain name) and port of the metastore host</description>
+</property>
+
+
+Through HS2
+$hive 
+	----------if open hive CLI then all Configuration is "OK"
+$show databases;
+$create database db1; 
+$create table abc (a int);
+$show tables;
+ 
+if all 4 command run that means HIVE working correctly "GooD"
+
+hosts (client, metastore, HiveServer). Rest other properties are required only on metastore host
+
+ 
